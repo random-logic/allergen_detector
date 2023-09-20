@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:async';
 import 'dart:io';
+import 'dart:core';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -45,18 +46,15 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final allergens = ['peanut'];
+  final allergens = HashSet<String>();
+  final allergenStorage = AllergenStorage();
   final noImage = const Icon(
     Icons.image_not_supported,
     size: 150.0,
   );
+  final foundAllergens = HashSet<String>();
 
-  late Widget _image;
-  final _foundAllergens = HashSet<String>();
-
-  _MyHomePageState() {
-    _image = noImage;
-  }
+  late Widget _image = noImage;
 
   Future<void> _pickAnImage(ImageSource src) async {
     final ImagePicker picker = ImagePicker();
@@ -70,29 +68,46 @@ class _MyHomePageState extends State<MyHomePage> {
 
     setState(() {
       _image = Image.file(File(photo.path));
-    });
-
-    setState(() {
-      _foundAllergens.clear();
+      foundAllergens.clear();
     });
 
     final inputImage = InputImage.fromFilePath(photo.path);
     final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
     final recognizedText = await textRecognizer.processImage(inputImage);
 
-    for (var block in recognizedText.blocks) {
-      for (var line in block.lines) {
-        for (var element in line.elements) {
-          if (allergens.contains(element.text.toLowerCase())) {
-            setState(() {
-              _foundAllergens.add(element.text.toLowerCase());
-            });
+    setState(() {
+      for (var block in recognizedText.blocks) {
+        for (var line in block.lines) {
+          for (var element in line.elements) {
+            if (allergens.contains(element.text.toLowerCase())) {
+              foundAllergens.add(element.text.toLowerCase());
+            }
           }
         }
       }
-    }
+    });
 
     textRecognizer.close();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    readAllergens();
+  }
+
+  void readAllergens() {
+    allergenStorage.readAllergens().then((result) {
+      allergens.clear();
+
+      var allergensToAdd = result.split(
+          RegExp(r'\s+')
+      ).where((s) => s.isNotEmpty).toList();
+
+      for (var allergenToAdd in allergensToAdd) {
+        allergens.add(allergenToAdd);
+      }
+    }); // Todo: Catch Error if the future throws any
   }
 
   @override
@@ -105,7 +120,12 @@ class _MyHomePageState extends State<MyHomePage> {
           icon: const Icon(Icons.menu),
           onSelected: (value) {
             if (value == 'Set Allergens') {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => SetAllergensPage(storage: AllergenStorage())));
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => SetAllergensPage(storage: allergenStorage))
+              ).then((result) {
+                readAllergens();
+              }); // Todo: catch errors if there are any thrown by future
             } else if (value == 'About') {
               // Todo: implement
             }
@@ -134,7 +154,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 alignment: Alignment.centerLeft,
                 child: const Text('Allergens:'),
               ),
-              for (var allergen in _foundAllergens)
+              for (var allergen in foundAllergens)
                 Container(
                   height: 30,
                   padding: const EdgeInsets.only(left: 20.0, right: 20.0),
@@ -214,11 +234,8 @@ class AllergenStorage {
   Future<String> readAllergens() async {
     try {
       final file = await _localFile;
-
-      // Read the file
       return await file.readAsString();
     } catch (e) {
-      // If encountering an error, return 0
       return '';
     }
   }
@@ -241,7 +258,7 @@ class SetAllergensPage extends StatefulWidget {
 }
 
 class _SetAllergensPageState extends State<SetAllergensPage> with WidgetsBindingObserver {
-  var _show_saved_notification = () {};
+  var showSavedNotification = () {};
   late StreamSubscription<bool> _keyboardSubscription;
 
   final _txt = TextEditingController();
@@ -267,9 +284,10 @@ class _SetAllergensPageState extends State<SetAllergensPage> with WidgetsBinding
       }
     });
 
-    _focusNode.addListener(() {
+    _focusNode.addListener(() async {
       if (!_focusNode.hasFocus) {
-        _show_saved_notification();
+        await widget.storage.writeAllergens(_txt.text);
+        showSavedNotification();
       }
     });
   }
@@ -282,7 +300,7 @@ class _SetAllergensPageState extends State<SetAllergensPage> with WidgetsBinding
 
   @override
   Widget build(BuildContext context) {
-    _show_saved_notification = () {
+    showSavedNotification = () {
       final snackBar = SnackBar(
         content: const Text('Saved!'),
         action: SnackBarAction(
@@ -298,16 +316,22 @@ class _SetAllergensPageState extends State<SetAllergensPage> with WidgetsBinding
       ScaffoldMessenger.of(context).showSnackBar(snackBar);
     };
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Set Allergens'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: TextField(
-        focusNode: _focusNode,
-        controller: _txt,
-        keyboardType: TextInputType.multiline,
-        maxLines: null,
+    return WillPopScope(
+      onWillPop: () async {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        return true;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Set Allergens'),
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        ),
+        body: TextField(
+          focusNode: _focusNode,
+          controller: _txt,
+          keyboardType: TextInputType.multiline,
+          maxLines: null,
+        ),
       ),
     );
   }
