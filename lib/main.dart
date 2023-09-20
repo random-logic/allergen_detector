@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
@@ -240,34 +241,73 @@ class SetAllergensPage extends StatefulWidget {
 }
 
 class _SetAllergensPageState extends State<SetAllergensPage> with WidgetsBindingObserver {
-  String _content = '';
+  var _show_saved_notification = () {};
+  late StreamSubscription<bool> _keyboardSubscription;
+
+  final _txt = TextEditingController();
+  final _focusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     widget.storage.readAllergens().then((content) {
       setState(() {
-        _content = content;
+        _txt.text = content;
       });
+    });
+
+    var keyboardVisibilityController = KeyboardVisibilityController();
+    _keyboardSubscription = keyboardVisibilityController.onChange.listen((bool visible) {
+      if (!visible) {
+        _focusNode.unfocus();
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.immersiveSticky,
+          overlays: [SystemUiOverlay.top]
+        );
+      }
+    });
+
+    _focusNode.addListener(() {
+      if (!_focusNode.hasFocus) {
+        _show_saved_notification();
+      }
     });
   }
 
   @override
+  void dispose() {
+    _keyboardSubscription.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    _show_saved_notification = () {
+      final snackBar = SnackBar(
+        content: const Text('Saved!'),
+        action: SnackBarAction(
+          label: 'close',
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          },
+        ),
+      );
+
+      // Find the ScaffoldMessenger in the widget tree
+      // and use it to show a SnackBar.
+      ScaffoldMessenger.of(context).showSnackBar(snackBar);
+    };
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Set Allergens'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: TextField(
+        focusNode: _focusNode,
+        controller: _txt,
         keyboardType: TextInputType.multiline,
         maxLines: null,
-        onEditingComplete: () {
-          SystemChrome.setEnabledSystemUIMode(
-            SystemUiMode.immersiveSticky,
-            overlays: [SystemUiOverlay.top]
-          );
-        },
       ),
     );
   }
